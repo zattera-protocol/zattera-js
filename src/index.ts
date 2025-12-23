@@ -19,11 +19,15 @@ export {
   serializeTransaction,
   serializeSignedTransaction,
   TransactionSerializer,
+  Auth,
+  encodeMemo,
+  decodeMemo,
+  decodeMemoWithKey,
 } from './auth/index.js';
 
 export type { SignConfig } from './auth/index.js';
 
-// Core Types
+// Core Types (Note: Signature, PublicKey, PrivateKey are type aliases for strings in types/index.ts)
 export type {
   ZatteraClientConfig,
   JsonRpcRequest,
@@ -34,9 +38,6 @@ export type {
   AccountName,
   BlockId,
   TransactionId,
-  Signature,
-  PublicKey,
-  PrivateKey,
   ShareType,
   AssetSymbol,
   Asset,

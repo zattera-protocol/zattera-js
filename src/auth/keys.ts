@@ -3,8 +3,8 @@
  */
 
 import * as secp256k1 from '@noble/secp256k1';
-import { sha256 } from '@noble/hashes/sha256';
-import { ripemd160 } from '@noble/hashes/ripemd160';
+import { sha256 } from '@noble/hashes/sha2';
+import { ripemd160 } from '@noble/hashes/legacy';
 import bs58 from 'bs58';
 
 export class PrivateKey {
@@ -104,14 +104,51 @@ export class PrivateKey {
 
   /**
    * Sign a message hash
+   * @param messageHash The message hash to sign
+   * @returns Signature with recovery parameter
    */
   async sign(messageHash: Uint8Array): Promise<Signature> {
-    const signature = await secp256k1.signAsync(messageHash, this.key, {
-      der: false,
-      recovered: true,
+    // signAsync returns RecoveredSignature which has r, s, and recovery properties
+    const sig = await secp256k1.signAsync(messageHash, this.key, {
+      lowS: true, // Enforce canonical signatures (prevents malleability)
     });
 
-    return new Signature(signature);
+    return new Signature({ signature: sig.toCompactRawBytes(), recovery: sig.recovery ?? 0 });
+  }
+
+  /**
+   * Get shared secret with a public key (for ECIES encryption)
+   * @param publicKey The public key to generate shared secret with
+   * @returns Shared secret as Uint8Array
+   */
+  getSharedSecret(publicKey: PublicKey): Uint8Array {
+    const sharedPoint = secp256k1.getSharedSecret(this.key, publicKey.toBytes(), true);
+    // Remove the prefix byte (0x02 or 0x03) to get the 32-byte shared secret
+    return sharedPoint.slice(1);
+  }
+
+  /**
+   * Derive child key from offset (hierarchical key derivation)
+   * @param offset Offset string for derivation
+   * @returns New derived PrivateKey
+   */
+  child(offset: string): PrivateKey {
+    const offsetHash = sha256(new TextEncoder().encode(offset));
+    const offsetBigInt = BigInt('0x' + Array.from(offsetHash).map(b => b.toString(16).padStart(2, '0')).join(''));
+    const keyBigInt = BigInt('0x' + Array.from(this.key).map(b => b.toString(16).padStart(2, '0')).join(''));
+
+    // secp256k1 curve order
+    const n = BigInt('0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141');
+    const childKeyBigInt = (keyBigInt + offsetBigInt) % n;
+
+    // Convert back to 32-byte array
+    const childKeyHex = childKeyBigInt.toString(16).padStart(64, '0');
+    const childKeyBytes = new Uint8Array(32);
+    for (let i = 0; i < 32; i++) {
+      childKeyBytes[i] = parseInt(childKeyHex.slice(i * 2, i * 2 + 2), 16);
+    }
+
+    return new PrivateKey(childKeyBytes);
   }
 }
 
@@ -180,6 +217,18 @@ export class PublicKey {
       return false;
     }
   }
+
+  /**
+   * Derive child key from offset (hierarchical key derivation)
+   * Note: This is not implemented for public keys alone, derive from private key instead
+   * @param _offset Offset string for derivation (unused)
+   * @returns Never - throws error
+   */
+  child(_offset: string): PublicKey {
+    // This would require point addition which is complex
+    // For now, we'll derive from private key if available
+    throw new Error('PublicKey.child() requires private key derivation');
+  }
 }
 
 export class Signature {
@@ -192,12 +241,16 @@ export class Signature {
       if (sig.length !== 65) {
         throw new Error('Signature must be 65 bytes');
       }
-      this.recovery = sig[0] - 27;
+      const recoveryByte = sig[0];
+      if (recoveryByte === undefined) {
+        throw new Error('Invalid signature: missing recovery byte');
+      }
+      this.recovery = recoveryByte - 27;
       this.sig = sig.slice(1);
     } else {
       // From secp256k1.signAsync result
       this.sig = sig.signature;
-      this.recovery = sig.recovery;
+      this.recovery = sig.recovery ?? 0;
     }
   }
 
@@ -222,12 +275,18 @@ export class Signature {
    * Recover public key from signature and message hash
    */
   async recoverPublicKey(messageHash: Uint8Array): Promise<PublicKey> {
-    const publicKeyBytes = secp256k1.recoverPublicKey(
-      messageHash,
-      this.sig,
-      this.recovery,
-      true
-    );
+    // Create a Signature instance from the compact bytes
+    const sig = secp256k1.Signature.fromCompact(this.sig);
+
+    // Add recovery bit
+    const recoveredSig = sig.addRecoveryBit(this.recovery);
+
+    // Recover the public key point
+    const point = recoveredSig.recoverPublicKey(messageHash);
+
+    // Convert to compressed bytes
+    const publicKeyBytes = point.toRawBytes(true);
+
     return new PublicKey(publicKeyBytes);
   }
 }

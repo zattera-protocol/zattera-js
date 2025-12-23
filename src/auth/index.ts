@@ -2,13 +2,14 @@
  * Authentication and transaction signing for Zattera blockchain
  */
 
-import { sha256 } from '@noble/hashes/sha256';
-import { PrivateKey, PublicKey, Signature } from './keys.js';
+import { sha256 } from '@noble/hashes/sha2';
+import { PrivateKey, PublicKey, Signature, generateKeys as genKeys } from './keys.js';
 import { serializeTransaction } from './serializer.js';
-import type { Transaction, SignedTransaction } from '../types/index.js';
+import type { Transaction, SignedTransaction, Operation } from '../types/index.js';
 
 export * from './keys.js';
 export * from './serializer.js';
+export * from './memo.js';
 
 /**
  * Configuration for signing
@@ -136,13 +137,13 @@ export function createTransaction(
 ): Transaction {
   const expirationString = typeof expiration === 'string'
     ? expiration
-    : expiration.toISOString().split('.')[0]; // Remove milliseconds
+    : (expiration.toISOString().split('.')[0] ?? ''); // Remove milliseconds
 
   return {
     ref_block_num: refBlockNum & 0xffff, // Ensure it's within uint16 range
     ref_block_prefix: refBlockPrefix >>> 0, // Ensure it's uint32
     expiration: expirationString,
-    operations,
+    operations: operations as Operation[],
     extensions: [],
   };
 }
@@ -169,3 +170,144 @@ function bufferToHex(buffer: Uint8Array): string {
     .map(b => b.toString(16).padStart(2, '0'))
     .join('');
 }
+
+/**
+ * Auth API - Comprehensive authentication utilities
+ */
+export const Auth = {
+  /**
+   * Generate all role keys from account name and password
+   * @param name Account name
+   * @param password Password
+   * @param roles Array of role names (default: ['owner', 'active', 'posting', 'memo'])
+   * @returns Object mapping roles to private WIF keys and public keys
+   *
+   * @example
+   * ```typescript
+   * const keys = Auth.getPrivateKeys('alice', 'password123');
+   * console.log(keys.active); // WIF private key
+   * console.log(keys.activePubkey); // ZTR... public key
+   * ```
+   */
+  getPrivateKeys(
+    name: string,
+    password: string,
+    roles: string[] = ['owner', 'active', 'posting', 'memo']
+  ): Record<string, string> {
+    const result: Record<string, string> = {};
+    const keys = genKeys(name, password, roles);
+
+    for (const role of roles) {
+      const roleKey = keys[role];
+      if (roleKey) {
+        result[role] = roleKey.private;
+        result[`${role}Pubkey`] = roleKey.public;
+      }
+    }
+
+    return result;
+  },
+
+  /**
+   * Generate public keys only from account name and password
+   * @param name Account name
+   * @param password Password
+   * @param roles Array of role names
+   * @returns Object mapping roles to public keys
+   */
+  generateKeys(
+    name: string,
+    password: string,
+    roles: string[] = ['owner', 'active', 'posting', 'memo']
+  ): Record<string, string> {
+    const keys = genKeys(name, password, roles);
+    const result: Record<string, string> = {};
+
+    for (const role of roles) {
+      const roleKey = keys[role];
+      if (roleKey) {
+        result[role] = roleKey.public;
+      }
+    }
+
+    return result;
+  },
+
+  /**
+   * Convert account credentials to WIF format for a specific role
+   * @param name Account name
+   * @param password Password
+   * @param role Role name (e.g., 'active', 'posting')
+   * @returns WIF private key
+   */
+  toWif(name: string, password: string, role: string = 'active'): string {
+    const privateKey = PrivateKey.fromLogin(name, password, role);
+    return privateKey.toWif();
+  },
+
+  /**
+   * Convert WIF private key to public key
+   * @param privateWif WIF format private key
+   * @param addressPrefix Address prefix (default: 'ZTR')
+   * @returns Public key string
+   */
+  wifToPublic(privateWif: string, addressPrefix: string = 'ZTR'): string {
+    const privateKey = PrivateKey.fromWif(privateWif);
+    const publicKey = privateKey.toPublic();
+    return publicKey.toString(addressPrefix);
+  },
+
+  /**
+   * Check if a WIF key is valid
+   * @param privateWif WIF format private key
+   * @returns true if valid, false otherwise
+   */
+  isWif(privateWif: string): boolean {
+    try {
+      PrivateKey.fromWif(privateWif);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+
+  /**
+   * Sign a transaction with private keys
+   * @param tx Transaction to sign
+   * @param keys Array of WIF private keys
+   * @param chainId Chain ID
+   * @returns Signed transaction
+   */
+  signTransaction(
+    tx: Transaction,
+    keys: string[],
+    chainId: string
+  ): Promise<SignedTransaction> {
+    return signTransaction(tx, keys, chainId);
+  },
+
+  /**
+   * Verify account credentials against authorities
+   * @param name Account name
+   * @param password Password
+   * @param auths Authority public keys to verify against
+   * @param role Role to check (default: 'active')
+   * @returns true if credentials match, false otherwise
+   */
+  verify(
+    name: string,
+    password: string,
+    auths: { owner?: string[]; active?: string[]; posting?: string[] },
+    role: string = 'active'
+  ): boolean {
+    const privateKey = PrivateKey.fromLogin(name, password, role);
+    const publicKey = privateKey.toPublic().toString('ZTR');
+
+    const roleAuths = auths[role as keyof typeof auths];
+    if (!roleAuths) {
+      return false;
+    }
+
+    return roleAuths.includes(publicKey);
+  },
+};

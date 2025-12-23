@@ -8,7 +8,10 @@ import {
   signTransaction,
   verifyTransactionSignatures,
   createTransaction,
-} from './index.js';
+  Auth,
+  encodeMemo,
+  decodeMemoWithKey,
+} from '../index.js';
 
 describe('PrivateKey', () => {
   it('should create private key from seed', () => {
@@ -279,5 +282,178 @@ describe('verifyTransactionSignatures', () => {
     expect(recoveredKeys).toHaveLength(2);
     expect(recoveredKeys[0].toString()).toBe(pubKey1.toString());
     expect(recoveredKeys[1].toString()).toBe(pubKey2.toString());
+  });
+});
+
+describe('Auth API', () => {
+  it('should generate private keys for all roles', () => {
+    const keys = Auth.getPrivateKeys('alice', 'password123');
+
+    expect(keys).toHaveProperty('owner');
+    expect(keys).toHaveProperty('ownerPubkey');
+    expect(keys).toHaveProperty('active');
+    expect(keys).toHaveProperty('activePubkey');
+    expect(keys).toHaveProperty('posting');
+    expect(keys).toHaveProperty('postingPubkey');
+    expect(keys).toHaveProperty('memo');
+    expect(keys).toHaveProperty('memoPubkey');
+
+    expect(typeof keys.owner).toBe('string');
+    expect(typeof keys.ownerPubkey).toBe('string');
+    expect(keys.owner).toMatch(/^5[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]+$/);
+    expect(keys.ownerPubkey).toMatch(/^ZTR[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]+$/);
+  });
+
+  it('should generate public keys only', () => {
+    const keys = Auth.generateKeys('alice', 'password123');
+
+    expect(keys).toHaveProperty('owner');
+    expect(keys).toHaveProperty('active');
+    expect(keys).toHaveProperty('posting');
+    expect(keys).toHaveProperty('memo');
+
+    expect(keys).not.toHaveProperty('ownerPubkey');
+    expect(typeof keys.owner).toBe('string');
+    expect(keys.owner).toMatch(/^ZTR[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]+$/);
+  });
+
+  it('should convert credentials to WIF', () => {
+    const wif = Auth.toWif('alice', 'password123', 'active');
+
+    expect(typeof wif).toBe('string');
+    expect(wif).toMatch(/^5[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]+$/);
+    expect(Auth.isWif(wif)).toBe(true);
+  });
+
+  it('should convert WIF to public key', () => {
+    const wif = Auth.toWif('alice', 'password123', 'active');
+    const pubKey = Auth.wifToPublic(wif);
+
+    expect(typeof pubKey).toBe('string');
+    expect(pubKey).toMatch(/^ZTR[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]+$/);
+  });
+
+  it('should verify valid credentials', () => {
+    const keys = Auth.getPrivateKeys('alice', 'password123');
+
+    const auths = {
+      active: [keys.activePubkey],
+    };
+
+    const isValid = Auth.verify('alice', 'password123', auths, 'active');
+    expect(isValid).toBe(true);
+  });
+
+  it('should reject invalid credentials', () => {
+    const keys = Auth.getPrivateKeys('alice', 'password123');
+
+    const auths = {
+      active: [keys.activePubkey],
+    };
+
+    const isValid = Auth.verify('alice', 'wrongpassword', auths, 'active');
+    expect(isValid).toBe(false);
+  });
+
+  it('should generate consistent keys', () => {
+    const keys1 = Auth.getPrivateKeys('alice', 'password123');
+    const keys2 = Auth.getPrivateKeys('alice', 'password123');
+
+    expect(keys1.active).toBe(keys2.active);
+    expect(keys1.activePubkey).toBe(keys2.activePubkey);
+  });
+});
+
+describe('Memo Encryption', () => {
+  it('should encrypt and decrypt memos', async () => {
+    const senderKey = PrivateKey.fromSeed('sender seed');
+    const recipientKey = PrivateKey.fromSeed('recipient seed');
+    const recipientPubKey = recipientKey.toPublic();
+
+    const originalMemo = 'Hello, this is a secret message!';
+    const encrypted = await encodeMemo(senderKey, recipientPubKey, originalMemo);
+
+    expect(encrypted).toMatch(/^#[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]+$/);
+    expect(encrypted).not.toContain(originalMemo);
+
+    const senderPubKey = senderKey.toPublic();
+    const decrypted = await decodeMemoWithKey(recipientKey, senderPubKey, encrypted);
+
+    expect(decrypted).toBe('#' + originalMemo);
+  });
+
+  it('should handle memos with # prefix', async () => {
+    const senderKey = PrivateKey.fromSeed('sender seed');
+    const recipientKey = PrivateKey.fromSeed('recipient seed');
+    const recipientPubKey = recipientKey.toPublic();
+
+    const originalMemo = '#Already has prefix';
+    const encrypted = await encodeMemo(senderKey, recipientPubKey, originalMemo);
+
+    const senderPubKey = senderKey.toPublic();
+    const decrypted = await decodeMemoWithKey(recipientKey, senderPubKey, encrypted);
+
+    expect(decrypted).toBe(originalMemo);
+  });
+
+  it('should return unencrypted memos as-is', async () => {
+    const recipientKey = PrivateKey.fromSeed('recipient seed');
+    const senderPubKey = PrivateKey.fromSeed('sender seed').toPublic();
+
+    const unencryptedMemo = 'This is not encrypted';
+    const result = await decodeMemoWithKey(recipientKey, senderPubKey, unencryptedMemo);
+
+    expect(result).toBe(unencryptedMemo);
+  });
+
+  it('should produce consistent encryption with same nonce', async () => {
+    const senderKey = PrivateKey.fromSeed('sender seed');
+    const recipientKey = PrivateKey.fromSeed('recipient seed');
+    const recipientPubKey = recipientKey.toPublic();
+
+    const nonce = new Uint8Array(8).fill(42);
+    const memo = 'Test message';
+
+    const encrypted1 = await encodeMemo(senderKey, recipientPubKey, memo, nonce);
+    const encrypted2 = await encodeMemo(senderKey, recipientPubKey, memo, nonce);
+
+    expect(encrypted1).toBe(encrypted2);
+  });
+});
+
+describe('PrivateKey Advanced Features', () => {
+  it('should generate shared secret', () => {
+    const key1 = PrivateKey.fromSeed('key1 seed');
+    const key2 = PrivateKey.fromSeed('key2 seed');
+
+    const pubKey1 = key1.toPublic();
+    const pubKey2 = key2.toPublic();
+
+    const secret1 = key1.getSharedSecret(pubKey2);
+    const secret2 = key2.getSharedSecret(pubKey1);
+
+    expect(secret1).toBeInstanceOf(Uint8Array);
+    expect(secret2).toBeInstanceOf(Uint8Array);
+    expect(secret1).toEqual(secret2); // Shared secrets should match
+    expect(secret1.length).toBe(32); // Should be 32 bytes
+  });
+
+  it('should derive child keys', () => {
+    const parentKey = PrivateKey.fromSeed('parent seed');
+    const childKey1 = parentKey.child('offset1');
+    const childKey2 = parentKey.child('offset2');
+
+    expect(childKey1).toBeInstanceOf(PrivateKey);
+    expect(childKey2).toBeInstanceOf(PrivateKey);
+    expect(childKey1.toWif()).not.toBe(childKey2.toWif());
+    expect(childKey1.toWif()).not.toBe(parentKey.toWif());
+  });
+
+  it('should derive same child key with same offset', () => {
+    const parentKey = PrivateKey.fromSeed('parent seed');
+    const childKey1 = parentKey.child('offset1');
+    const childKey2 = parentKey.child('offset1');
+
+    expect(childKey1.toWif()).toBe(childKey2.toWif());
   });
 });
