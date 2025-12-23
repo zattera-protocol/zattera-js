@@ -6,8 +6,14 @@
 // Client Configuration
 // ============================================================================
 
+/**
+ * Supported network names for chain ID computation
+ */
+export type NetworkName = 'zattera' | 'testnet';
+
 export interface ZatteraClientConfig {
   endpoint: string;
+  networkName?: NetworkName;
   timeout?: number;
   retries?: number;
 }

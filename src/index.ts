@@ -5,6 +5,9 @@
 
 export { ZatteraClient } from './client/index.js';
 
+// Chain ID Utilities
+export { generateChainId } from './utils/chain-id.js';
+
 // Auth & Cryptography
 export {
   PrivateKey,
@@ -30,6 +33,7 @@ export type { SignConfig } from './auth/index.js';
 // Core Types (Note: Signature, PublicKey, PrivateKey are type aliases for strings in types/index.ts)
 export type {
   ZatteraClientConfig,
+  NetworkName,
   JsonRpcRequest,
   JsonRpcResponse,
   JsonRpcError,

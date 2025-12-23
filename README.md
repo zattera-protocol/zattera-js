@@ -28,10 +28,17 @@ npm install zattera-js
 ```typescript
 import { ZatteraClient } from 'zattera-js';
 
+// Default: uses 'zattera' network
 const client = new ZatteraClient({
   endpoint: 'https://rpc.zattera.network',
   timeout: 30000,  // optional, default: 30000ms
   retries: 3,      // optional, default: 3
+});
+
+// Or specify network name
+const testnetClient = new ZatteraClient({
+  endpoint: 'https://testnet.zattera.network',
+  networkName: 'testnet',  // 'zattera' (default) | 'testnet'
 });
 
 // Get dynamic global properties
@@ -70,10 +77,51 @@ new ZatteraClient(config: ZatteraClientConfig)
 
 **Config options:**
 - `endpoint` (string, required): RPC endpoint URL
+- `networkName` (NetworkName, optional): Network name for chain ID computation
+  - `'zattera'` (default) - Zattera mainnet
+  - `'testnet'` - Zattera testnet
+  - Chain ID is automatically computed using SHA256 hash
 - `timeout` (number, optional): Request timeout in milliseconds (default: 30000)
 - `retries` (number, optional): Number of retry attempts (default: 3)
 
+**Network Examples:**
+```typescript
+// Default: 'zattera' network (SHA256 hash computed automatically)
+const client1 = new ZatteraClient({
+  endpoint: 'https://rpc.zattera.network'
+});
+
+// Testnet network
+const client2 = new ZatteraClient({
+  endpoint: 'https://testnet.zattera.network',
+  networkName: 'testnet'
+});
+
+// Retrieve the computed chain ID
+const chainId = client1.getChainId();
+console.log('Chain ID:', chainId); // SHA256 hash of 'zattera'
+```
+
 ### Core Methods
+
+#### Get Chain ID
+
+```typescript
+getChainId(): string
+```
+
+Returns the computed or configured chain ID as a hex string (without 0x prefix).
+
+**Example:**
+```typescript
+const client = new ZatteraClient({
+  endpoint: 'https://rpc.zattera.network',
+  networkName: 'zattera'
+});
+
+const chainId = client.getChainId();
+console.log('Chain ID:', chainId); // SHA256('zattera')
+```
 
 #### Generic RPC Call
 

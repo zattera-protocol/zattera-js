@@ -44,6 +44,7 @@ import type {
   Vote,
   WitnessVote,
 } from '../types/index.js';
+import { generateChainId } from '../utils/chain-id.js';
 
 /**
  * Zattera RPC Client
@@ -53,12 +54,14 @@ import type {
  */
 export class ZatteraClient {
   private endpoint: string;
+  private chainId: string;
   private timeout: number;
   private retries: number;
   private requestId: number;
 
   constructor(config: ZatteraClientConfig) {
     this.endpoint = config.endpoint;
+    this.chainId = generateChainId(config.networkName || 'zattera');
     this.timeout = config.timeout ?? 30000;
     this.retries = config.retries ?? 3;
     this.requestId = 0;
@@ -66,6 +69,13 @@ export class ZatteraClient {
 
   private getNextId(): number {
     return ++this.requestId;
+  }
+
+  /**
+   * Get the configured chain ID
+   */
+  getChainId(): string {
+    return this.chainId;
   }
 
   /**
