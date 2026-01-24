@@ -14,7 +14,7 @@ export default defineConfig({
     target: 'node18',
     minify: false,
     rollupOptions: {
-      external: [],
+      external: [/^@noble\//],
       output: {
         preserveModules: true,
         preserveModulesRoot: 'src',

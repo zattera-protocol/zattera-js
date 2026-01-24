@@ -1,6 +1,6 @@
 {
   "name": "zattera-js",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "TypeScript library for Zattera blockchain RPC calls",
   "type": "module",
   "main": "./dist/node/index.js",
